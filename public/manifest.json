@@ -1,0 +1,17 @@
+{
+  "name": "Tindahan POS & Inventory",
+  "short_name": "Tindahan",
+  "description": "Offline-first POS and Stock Inventory for Sari-Sari Store & Rice Business",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
