@@ -14,3 +14,28 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-report-overlay,
+  .print-report-overlay * {
+    visibility: visible;
+  }
+  .print-report-overlay {
+    position: static !important;
+    background: white !important;
+    display: block !important;
+  }
+  .print-report-sheet {
+    max-width: 100% !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

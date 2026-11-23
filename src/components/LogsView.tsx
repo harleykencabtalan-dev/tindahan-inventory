@@ -9,6 +9,7 @@ import {
   TrendingUp,
   ChevronLeft,
   ChevronRight,
+  FileText,
 } from 'lucide-react';
 import {
   type Product,
@@ -20,6 +21,12 @@ import {
   roundNum,
 } from '../types';
 import { voidSaleTransaction } from '../db';
+import {
+  computeTopItems,
+  groupSalesByDate,
+  groupStockLogsByDate,
+} from '../utils/logAnalytics';
+import { ReportModal } from './ReportModal';
 
 interface LogsViewProps {
   uid: string;
@@ -30,7 +37,7 @@ interface LogsViewProps {
 
 type LogPeriod = 'day' | 'weekly' | 'month' | 'year';
 type BusinessFilter = 'all' | BusinessType;
-type LogKind = 'sales' | 'restocks';
+type LogSubView = 'receipts' | 'restocks';
 
 const PAGE_SIZE = 30;
 
@@ -56,7 +63,10 @@ function getDateRange(
 
   if (period === 'day') {
     const [y, m, day] = selectedDate.split('-').map(Number);
-    const d = y && m && day ? new Date(y, m - 1, day) : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const d =
+      y && m && day
+        ? new Date(y, m - 1, day)
+        : new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const start = d.getTime();
     const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
     const isToday = toDateInputValue(d) === toDateInputValue(now);
@@ -81,7 +91,6 @@ function getDateRange(
     return { start, end, label };
   }
 
-  // Year
   const start = new Date(selectedYear, 0, 1).getTime();
   const end = new Date(selectedYear + 1, 0, 1).getTime();
   return { start, end, label: `Year ${selectedYear}` };
@@ -98,8 +107,10 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
   const [selectedYear, setSelectedYear] = useState(thisYear);
 
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('all');
-  const [logKind, setLogKind] = useState<LogKind>('sales');
+  const [subView, setSubView] = useState<LogSubView>('receipts');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const handlePeriodChange = (next: LogPeriod) => {
     setPeriod(next);
@@ -111,8 +122,8 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
     setVisibleCount(PAGE_SIZE);
   };
 
-  const handleLogKindChange = (next: LogKind) => {
-    setLogKind(next);
+  const handleSubViewChange = (next: LogSubView) => {
+    setSubView(next);
     setVisibleCount(PAGE_SIZE);
   };
 
@@ -142,7 +153,6 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
     [period, selectedDate, selectedMonth, selectedYear]
   );
 
-  // Fallback cost lookup for older sales saved before costPrice snapshotting
   const productCostMap = useMemo(() => {
     const map = new Map<string, number>();
     for (const p of products) {
@@ -237,6 +247,28 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
     };
   }, [periodSales, businessFilter, productCostMap]);
 
+  const soldItems = useMemo(
+    () => computeTopItems(filteredSales, productCostMap, Number.MAX_SAFE_INTEGER),
+    [filteredSales, productCostMap]
+  );
+
+  const groupedSales = useMemo(
+    () => groupSalesByDate(filteredSales.slice(0, visibleCount)),
+    [filteredSales, visibleCount]
+  );
+
+  const groupedStockLogs = useMemo(
+    () => groupStockLogsByDate(filteredStockLogs.slice(0, visibleCount)),
+    [filteredStockLogs, visibleCount]
+  );
+
+  const businessLabel =
+    businessFilter === 'all'
+      ? 'All Combined'
+      : businessFilter === 'rice'
+        ? 'Rice (Bigas)'
+        : 'Sari-Sari';
+
   const handleVoid = async (sale: Sale) => {
     if (!sale.id || sale.voided) return;
     if (!window.confirm('Void this sale and return all items back to stock?')) return;
@@ -245,7 +277,7 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
 
   return (
     <div className="flex flex-col pb-24">
-      {/* Period Selector (Day / Weekly / Month / Year) */}
+      {/* Period Selector & Filters */}
       <div className="sticky top-14 z-20 bg-slate-50/95 backdrop-blur-sm px-4 pt-3 pb-2.5 border-b border-slate-200/80 space-y-2.5">
         <div className="grid grid-cols-4 bg-slate-200/70 p-1 rounded-xl">
           {(
@@ -260,9 +292,7 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
               key={p.id}
               onClick={() => handlePeriodChange(p.id)}
               className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                period === p.id
-                  ? 'bg-teal-700 text-white shadow-xs'
-                  : 'text-slate-600'
+                period === p.id ? 'bg-teal-700 text-white shadow-xs' : 'text-slate-600'
               }`}
             >
               {p.label}
@@ -418,24 +448,28 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
         </div>
       </div>
 
-      {/* Revenue & Profit Summary Hero Card */}
-      <div className="px-4 pt-3 space-y-3">
+      {/* Main Logs Body */}
+      <div className="px-4 pt-3 space-y-3.5">
+        {/* Hero Revenue & Profit Card */}
         <div className="bg-gradient-to-br from-teal-800 to-teal-700 text-white rounded-2xl p-4 shadow-md">
           <div className="flex items-center justify-between text-teal-100 text-xs font-semibold">
             <span className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5" />
-              {range.label} Summary
+              {range.label}
             </span>
-            <span className="bg-white/15 px-2.5 py-0.5 rounded-full">
-              {totals.txCount} {totals.txCount === 1 ? 'sale' : 'sales'}
-            </span>
+            <button
+              onClick={() => setReportOpen(true)}
+              className="bg-white/15 hover:bg-white/25 active:scale-95 px-2.5 py-1 rounded-full flex items-center gap-1 text-[11px] font-bold text-white transition-all"
+            >
+              <FileText className="w-3 h-3" />
+              Report / PDF
+            </button>
           </div>
 
-          {/* Primary Revenue + Profit Row */}
           <div className="grid grid-cols-2 gap-3 mt-3">
             <div>
               <div className="text-[11px] uppercase tracking-wider text-teal-200 font-semibold">
-                Revenue (Sales)
+                Revenue ({totals.txCount} {totals.txCount === 1 ? 'sale' : 'sales'})
               </div>
               <div className="text-2xl font-extrabold mt-0.5 tracking-tight">
                 {formatPeso(totals.totalRevenue)}
@@ -458,7 +492,6 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
             </div>
           </div>
 
-          {/* Sari-Sari vs Rice Breakdown */}
           <div className="grid grid-cols-2 gap-2 mt-3.5 pt-3 border-t border-white/15">
             <div className="bg-white/10 rounded-xl p-2.5">
               <div className="text-[11px] text-teal-100 flex items-center gap-1">
@@ -486,136 +519,174 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
           </div>
         </div>
 
-        {/* Log Kind Toggle (Sales vs Restocks) */}
-        <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleLogKindChange('sales')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
-                logKind === 'sales'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-600 border border-slate-200'
-              }`}
-            >
-              <Receipt className="w-3.5 h-3.5" />
-              Sales Logs ({filteredSales.length})
-            </button>
-            <button
-              onClick={() => handleLogKindChange('restocks')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
-                logKind === 'restocks'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-600 border border-slate-200'
-              }`}
-            >
-              <PackagePlus className="w-3.5 h-3.5" />
-              Restock Logs ({filteredStockLogs.length})
-            </button>
-          </div>
+        {/* 2 Clean Sub-View Tabs: Receipts | Restocks */}
+        <div className="grid grid-cols-2 gap-1.5 bg-slate-200/60 p-1 rounded-xl">
+          <button
+            onClick={() => handleSubViewChange('receipts')}
+            className={`py-2 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+              subView === 'receipts'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            Receipts ({filteredSales.length})
+          </button>
+          <button
+            onClick={() => handleSubViewChange('restocks')}
+            className={`py-2 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+              subView === 'restocks'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600'
+            }`}
+          >
+            <PackagePlus className="w-3.5 h-3.5" />
+            Restocks ({filteredStockLogs.length})
+          </button>
         </div>
 
-        {/* Sales Logs List */}
-        {logKind === 'sales' && (
-          <div className="space-y-2.5">
+        {/* SUB-VIEW 1: RECEIPTS (Grouped by Date in Simple Notebook Format: Qty | Product Name | Price) */}
+        {subView === 'receipts' && (
+          <div className="space-y-4">
             {filteredSales.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-sm">
-                No sales recorded for {range.label.toLowerCase()}.
+                No receipts recorded for {range.label.toLowerCase()}.
               </div>
             ) : (
               <>
-                {filteredSales.slice(0, visibleCount).map((sale) => {
-                  const src = getSaleSource(sale);
-                  const saleProfit = computeSaleProfit(sale);
-                  const dt = new Date(sale.createdAt);
-                  const timeStr = dt.toLocaleTimeString('en-PH', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  });
-                  const dateStr = dt.toLocaleDateString('en-PH', {
-                    month: 'short',
-                    day: 'numeric',
-                  });
+                {groupedSales.map((group) => (
+                  <div key={group.dateKey} className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-xs font-extrabold text-slate-600 uppercase tracking-wide">
+                        {group.label}
+                      </span>
+                      <span className="text-xs font-bold text-teal-800">
+                        {formatPeso(group.totalRevenue ?? 0)}
+                      </span>
+                    </div>
 
-                  return (
-                    <div
-                      key={sale.id}
-                      className={`p-3.5 rounded-2xl border ${
-                        sale.voided
-                          ? 'bg-slate-50 border-slate-200 opacity-60'
-                          : 'bg-white border-slate-200 shadow-2xs'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2 gap-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span
-                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md shrink-0 ${
-                              src === 'rice'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-teal-100 text-teal-800'
-                            }`}
-                          >
-                            {src === 'rice' ? 'Rice' : 'Sari-Sari'}
-                          </span>
-                          <span className="text-xs font-medium text-slate-500 truncate">
-                            {dateStr} • {timeStr}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {sale.voided ? (
-                            <span className="text-[10px] font-bold uppercase bg-red-100 text-red-700 px-2 py-0.5 rounded-md">
-                              Voided
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handleVoid(sale)}
-                              className="text-[11px] font-semibold text-red-600 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-50 active:bg-red-100"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              Undo
-                            </button>
-                          )}
-                        </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                      {/* 3-Column Notebook Header */}
+                      <div className="grid grid-cols-[56px_1fr_76px] gap-2 px-3.5 py-2 bg-slate-50 border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <span>Qty</span>
+                        <span>Product Name</span>
+                        <span className="text-right">Price</span>
                       </div>
 
-                      <ul className="space-y-0.5 text-xs text-slate-700">
-                        {sale.items.map((item, idx) => (
-                          <li key={idx} className="flex justify-between gap-2">
-                            <span className="truncate">
-                              {item.quantity} {item.unit} × {item.name}
-                            </span>
-                            <span className="text-slate-500 shrink-0">
-                              {formatPeso(item.subtotal)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="divide-y divide-slate-100">
+                        {group.items.map((sale) => {
+                          const src = getSaleSource(sale);
+                          const saleProfit = computeSaleProfit(sale);
+                          const isExpanded = expandedSaleId === sale.id;
+                          const timeStr = new Date(sale.createdAt).toLocaleTimeString('en-PH', {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          });
 
-                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                        <span className="text-slate-500 font-medium">
-                          Rev:{' '}
-                          <strong
-                            className={
-                              sale.voided
-                                ? 'line-through text-slate-400'
-                                : src === 'rice'
-                                  ? 'text-amber-800'
-                                  : 'text-teal-800'
-                            }
-                          >
-                            {formatPeso(sale.total)}
-                          </strong>
-                        </span>
+                          return (
+                            <div
+                              key={sale.id}
+                              className={sale.voided ? 'bg-slate-50/70 opacity-60' : ''}
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedSaleId(isExpanded ? null : (sale.id ?? null))
+                                }
+                                className="w-full text-left px-3.5 py-2.5 active:bg-slate-50 space-y-1"
+                              >
+                                {sale.items.map((item, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="grid grid-cols-[56px_1fr_76px] gap-2 items-baseline text-sm"
+                                  >
+                                    <span
+                                      className={`font-extrabold whitespace-nowrap ${
+                                        src === 'rice' ? 'text-amber-700' : 'text-teal-800'
+                                      }`}
+                                    >
+                                      {item.quantity}
+                                      {item.unit === 'kg' ? ' kg' : '×'}
+                                    </span>
+                                    <span
+                                      className={`font-medium truncate ${
+                                        sale.voided
+                                          ? 'line-through text-slate-400'
+                                          : 'text-slate-900'
+                                      }`}
+                                    >
+                                      {item.name}
+                                    </span>
+                                    <span
+                                      className={`text-right font-extrabold whitespace-nowrap ${
+                                        sale.voided
+                                          ? 'line-through text-slate-400'
+                                          : 'text-slate-900'
+                                      }`}
+                                    >
+                                      {formatPeso(item.subtotal)}
+                                    </span>
+                                  </div>
+                                ))}
 
-                        {!sale.voided && (
-                          <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold">
-                            +{formatPeso(saleProfit)} profit
-                          </span>
-                        )}
+                                <div className="flex items-center gap-1.5 pt-0.5 text-[10px] text-slate-400">
+                                  <span
+                                    className={`font-bold uppercase px-1.5 py-0.2 rounded ${
+                                      src === 'rice'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-teal-50 text-teal-800'
+                                    }`}
+                                  >
+                                    {src === 'rice' ? 'Rice' : 'Sari-Sari'}
+                                  </span>
+                                  <span>{timeStr}</span>
+                                  {sale.voided ? (
+                                    <span className="font-bold uppercase bg-red-100 text-red-700 px-1.5 py-0.2 rounded">
+                                      Voided
+                                    </span>
+                                  ) : (
+                                    <span className="ml-auto text-slate-400">
+                                      {isExpanded ? 'Hide' : 'Details'}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+
+                              {/* Inline Expandable Detail Strip (Profit, Bayad/Sukli, Undo) */}
+                              {isExpanded && (
+                                <div className="px-3.5 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px]">
+                                  <div className="space-y-0.5 text-slate-600">
+                                    {!sale.voided && (
+                                      <div className="font-bold text-emerald-700">
+                                        Profit: +{formatPeso(saleProfit)}
+                                      </div>
+                                    )}
+                                    <div>
+                                      Bayad: {formatPeso(sale.cashReceived)} • Sukli:{' '}
+                                      {formatPeso(sale.change)}
+                                    </div>
+                                  </div>
+
+                                  {!sale.voided && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVoid(sale)}
+                                      className="font-bold text-red-600 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 active:bg-red-100 shrink-0"
+                                    >
+                                      <RotateCcw className="w-3 h-3" />
+                                      Undo Sale
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
+
                 {filteredSales.length > visibleCount && (
                   <button
                     onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
@@ -629,57 +700,59 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
           </div>
         )}
 
-        {/* Restock Logs List */}
-        {logKind === 'restocks' && (
-          <div className="space-y-2.5">
+        {/* SUB-VIEW 3: RESTOCKS (Grouped by Date) */}
+        {subView === 'restocks' && (
+          <div className="space-y-4">
             {filteredStockLogs.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-sm">
                 No restocks recorded for {range.label.toLowerCase()}.
               </div>
             ) : (
               <>
-                {filteredStockLogs.slice(0, visibleCount).map((log) => {
-                  const dt = new Date(log.createdAt);
-                  const timeStr = dt.toLocaleTimeString('en-PH', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  });
-                  const dateStr = dt.toLocaleDateString('en-PH', {
-                    month: 'short',
-                    day: 'numeric',
-                  });
-
-                  return (
-                    <div
-                      key={log.id}
-                      className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <span
-                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
-                              log.business === 'rice'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-teal-100 text-teal-800'
-                            }`}
-                          >
-                            {log.business === 'rice' ? 'Rice' : 'Sari-Sari'}
-                          </span>
-                          <span className="text-[11px] text-slate-400">
-                            {dateStr} • {timeStr}
-                          </span>
-                        </div>
-                        <div className="font-bold text-sm text-slate-900 truncate">
-                          {log.productName}
-                        </div>
-                      </div>
-
-                      <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs shrink-0">
-                        +{log.quantityAdded} {log.unit}
-                      </span>
+                {groupedStockLogs.map((group) => (
+                  <div key={group.dateKey} className="space-y-2">
+                    <div className="px-1 text-xs font-extrabold text-slate-600 uppercase tracking-wide">
+                      {group.label}
                     </div>
-                  );
-                })}
+                    <div className="space-y-2">
+                      {group.items.map((log) => {
+                        const timeStr = new Date(log.createdAt).toLocaleTimeString('en-PH', {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        });
+                        return (
+                          <div
+                            key={log.id}
+                            className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span
+                                  className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-md ${
+                                    log.business === 'rice'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-teal-100 text-teal-800'
+                                  }`}
+                                >
+                                  {log.business === 'rice' ? 'Rice' : 'Sari-Sari'}
+                                </span>
+                                <span className="text-[11px] text-slate-400">{timeStr}</span>
+                              </div>
+                              <div className="font-bold text-sm text-slate-900 truncate">
+                                {log.productName}
+                              </div>
+                            </div>
+
+                            <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs shrink-0">
+                              +{log.quantityAdded} {log.unit}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
                 {filteredStockLogs.length > visibleCount && (
                   <button
                     onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
@@ -693,6 +766,17 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
           </div>
         )}
       </div>
+
+      {/* Printable / Save-as-PDF Report Modal */}
+      {reportOpen && (
+        <ReportModal
+          periodLabel={range.label}
+          businessLabel={businessLabel}
+          totals={totals}
+          items={soldItems}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
     </div>
   );
 }

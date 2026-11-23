@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { buildSaleRecord } from './db';
 import {
+  computeTopItems,
+  computePeriodBreakdown,
+  groupSalesByDate,
+} from './utils/logAnalytics';
+import {
   formatPeso,
   formatQty,
   getSaleSource,
   roundNum,
   type Product,
+  type Sale,
 } from './types';
 
 describe('Helper Functions (Unit Tests)', () => {
@@ -68,10 +74,10 @@ describe('Sale & Profit Calculation (Unit Tests)', () => {
     const sale = buildSaleRecord([{ product: rice, quantity: 2.5 }], 200, 'rice');
 
     expect(sale.source).toBe('rice');
-    expect(sale.total).toBe(155);      // 62 * 2.5
-    expect(sale.totalCost).toBe(135);  // 54 * 2.5
-    expect(sale.profit).toBe(20);      // 155 - 135
-    expect(sale.change).toBe(45);      // 200 - 155
+    expect(sale.total).toBe(155);
+    expect(sale.totalCost).toBe(135);
+    expect(sale.profit).toBe(20);
+    expect(sale.change).toBe(45);
     expect(sale.voided).toBe(false);
     expect(sale.items[0].profit).toBe(20);
   });
@@ -109,9 +115,112 @@ describe('Sale & Profit Calculation (Unit Tests)', () => {
       'sari-sari'
     );
 
-    expect(sale.total).toBe(76);      // 40 + 36
-    expect(sale.totalCost).toBe(60);  // 30 + 30
+    expect(sale.total).toBe(76);
+    expect(sale.totalCost).toBe(60);
     expect(sale.profit).toBe(16);
     expect(sale.change).toBe(0);
+  });
+});
+
+describe('In-App Log Analytics (Unit Tests)', () => {
+  const sampleSales: Sale[] = [
+    {
+      id: 's1',
+      source: 'rice',
+      items: [
+        {
+          productId: 'r1',
+          name: 'Dinorado Rice',
+          unit: 'kg',
+          price: 62,
+          costPrice: 54,
+          quantity: 5,
+          subtotal: 310,
+          profit: 40,
+        },
+      ],
+      total: 310,
+      totalCost: 270,
+      profit: 40,
+      cashReceived: 350,
+      change: 40,
+      createdAt: new Date(2026, 10, 24, 9, 0).getTime(),
+      voided: false,
+    },
+    {
+      id: 's2',
+      source: 'sari-sari',
+      items: [
+        {
+          productId: 'c1',
+          name: 'Coke Mismo',
+          unit: 'bottle',
+          price: 20,
+          costPrice: 15,
+          quantity: 3,
+          subtotal: 60,
+          profit: 15,
+        },
+      ],
+      total: 60,
+      totalCost: 45,
+      profit: 15,
+      cashReceived: 100,
+      change: 40,
+      createdAt: new Date(2026, 10, 23, 14, 0).getTime(),
+      voided: false,
+    },
+    {
+      id: 's3',
+      source: 'sari-sari',
+      items: [
+        {
+          productId: 'c1',
+          name: 'Coke Mismo',
+          unit: 'bottle',
+          price: 20,
+          costPrice: 15,
+          quantity: 2,
+          subtotal: 40,
+          profit: 10,
+        },
+      ],
+      total: 40,
+      totalCost: 30,
+      profit: 10,
+      cashReceived: 50,
+      change: 10,
+      createdAt: new Date(2026, 10, 24, 15, 0).getTime(),
+      voided: true, // Voided sale must be excluded from totals & top items
+    },
+  ];
+
+  it('ranks top selling items by revenue and excludes voided sales', () => {
+    const top = computeTopItems(sampleSales, new Map());
+    expect(top).toHaveLength(2);
+    expect(top[0].name).toBe('Dinorado Rice');
+    expect(top[0].revenue).toBe(310);
+    expect(top[0].profit).toBe(40);
+    expect(top[1].name).toBe('Coke Mismo');
+    expect(top[1].quantity).toBe(3); // Voided s3 excluded
+  });
+
+  it('groups sales by date with friendly labels and excludes voided revenue', () => {
+    const now = new Date(2026, 10, 24, 18, 0);
+    const groups = groupSalesByDate(sampleSales, now);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].label).toBe('Today');
+    expect(groups[0].totalRevenue).toBe(310); // s3 is voided
+    expect(groups[1].label).toBe('Yesterday');
+    expect(groups[1].totalRevenue).toBe(60);
+  });
+
+  it('builds daily breakdown buckets for weekly/monthly views', () => {
+    const buckets = computePeriodBreakdown(sampleSales, 'weekly', (s) => s.profit ?? 0);
+    expect(buckets).toHaveLength(2);
+    expect(buckets[0].key).toBe('2026-11-24');
+    expect(buckets[0].revenue).toBe(310);
+    expect(buckets[1].key).toBe('2026-11-23');
+    expect(buckets[1].revenue).toBe(60);
   });
 });

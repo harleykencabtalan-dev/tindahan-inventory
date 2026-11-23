@@ -137,7 +137,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1">
         {activeTab === 'pos' && (
-          <PosView uid={user.uid} products={sariSariProducts} sales={sales} />
+          <PosView uid={user.uid} products={products} sales={sales} />
         )}
         {activeTab === 'stock' && <StockView uid={user.uid} products={sariSariProducts} />}
         {activeTab === 'rice' && <RiceView uid={user.uid} riceProducts={riceProducts} />}
