@@ -1,0 +1,193 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // This security rules file assumes the following data structures:
+    //
+    // Collection: /stores/{uid}/products/{productId}
+    // Document ID: auto-generated or custom productId
+    // Fields:
+    //   - name: string (required, length 1..120)
+    //   - category: string (required, enum: 'Rice' | 'Drinks' | 'Snacks' | 'Canned & Noodles' | 'Condiments' | 'Toiletries' | 'Sari-Sari')
+    //   - unit: string (required, enum: 'kg' | 'pc' | 'pack' | 'sachet' | 'bottle' | 'can')
+    //   - price: number (required, >= 0)
+    //   - costPrice: number (required, >= 0)
+    //   - stock: number (required, >= 0)
+    //   - lowStockThreshold: number (required, >= 0)
+    //   - updatedAt: number (required, > 0, epoch ms)
+    //
+    // Collection: /stores/{uid}/sales/{saleId}
+    // Document ID: auto-generated or custom saleId
+    // Fields:
+    //   - source: string (required, enum: 'sari-sari' | 'rice')
+    //   - items: list (required, size 1..100)
+    //   - total: number (required, >= 0)
+    //   - totalCost: number (required, >= 0)
+    //   - profit: number (required)
+    //   - cashReceived: number (required, >= 0)
+    //   - change: number (required, >= 0)
+    //   - createdAt: number (required, > 0, epoch ms, immutable on update)
+    //   - voided: bool (required, on update only false -> true allowed)
+    //
+    // Collection: /stores/{uid}/stockLogs/{logId}
+    // Document ID: auto-generated or custom logId (append-only: create allowed, update denied)
+    // Fields:
+    //   - productId: string (required, length 1..128)
+    //   - productName: string (required, length 1..120)
+    //   - business: string (required, enum: 'sari-sari' | 'rice')
+    //   - unit: string (required, length 1..32)
+    //   - quantityAdded: number (required, > 0)
+    //   - createdAt: number (required, > 0, epoch ms)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the authenticated user owns the store path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Validate required fields exist
+    function hasRequiredFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(data, fields) {
+      return data.keys().hasOnly(fields);
+    }
+
+    // Validate non-empty string within length bounds
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    // Validate number >= 0
+    function isNonNegativeNumber(val) {
+      return val is number && val >= 0;
+    }
+
+    // Validate number > 0
+    function isPositiveNumber(val) {
+      return val is number && val > 0;
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in both create and update)
+    // ===============================================================
+
+    function isValidProduct(data) {
+      let allowedFields = [
+        'name', 'category', 'unit', 'price',
+        'costPrice', 'stock', 'lowStockThreshold', 'updatedAt'
+      ];
+      let validCategories = [
+        'Rice', 'Drinks', 'Snacks', 'Canned & Noodles',
+        'Condiments', 'Toiletries', 'Sari-Sari'
+      ];
+      let validUnits = ['kg', 'pc', 'pack', 'sachet', 'bottle', 'can'];
+
+      return hasOnlyAllowedFields(data, allowedFields) &&
+             hasRequiredFields(data, allowedFields) &&
+             isValidString(data.name, 1, 120) &&
+             data.category is string && data.category in validCategories &&
+             data.unit is string && data.unit in validUnits &&
+             isNonNegativeNumber(data.price) &&
+             isNonNegativeNumber(data.costPrice) &&
+             isNonNegativeNumber(data.stock) &&
+             isNonNegativeNumber(data.lowStockThreshold) &&
+             isPositiveNumber(data.updatedAt);
+    }
+
+    function isValidSale(data) {
+      let allowedFields = [
+        'source', 'items', 'total', 'totalCost',
+        'profit', 'cashReceived', 'change', 'createdAt', 'voided'
+      ];
+      let validSources = ['sari-sari', 'rice'];
+
+      return hasOnlyAllowedFields(data, allowedFields) &&
+             hasRequiredFields(data, allowedFields) &&
+             data.source is string && data.source in validSources &&
+             data.items is list && data.items.size() >= 1 && data.items.size() <= 100 &&
+             isNonNegativeNumber(data.total) &&
+             isNonNegativeNumber(data.totalCost) &&
+             data.profit is number &&
+             isNonNegativeNumber(data.cashReceived) &&
+             isNonNegativeNumber(data.change) &&
+             isPositiveNumber(data.createdAt) &&
+             data.voided is bool;
+    }
+
+    // Restrict sale updates strictly to toggling voided from false to true
+    function isValidSaleVoidUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voided']) &&
+             resource.data.voided == false &&
+             request.resource.data.voided == true;
+    }
+
+    function isValidStockLog(data) {
+      let allowedFields = [
+        'productId', 'productName', 'business',
+        'unit', 'quantityAdded', 'createdAt'
+      ];
+      let validBusinesses = ['sari-sari', 'rice'];
+
+      return hasOnlyAllowedFields(data, allowedFields) &&
+             hasRequiredFields(data, allowedFields) &&
+             isValidString(data.productId, 1, 128) &&
+             isValidString(data.productName, 1, 120) &&
+             data.business is string && data.business in validBusinesses &&
+             isValidString(data.unit, 1, 32) &&
+             isPositiveNumber(data.quantityAdded) &&
+             isPositiveNumber(data.createdAt);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /stores/{uid} {
+      // Products: strict owner-only CRUD with full schema validation on create & update
+      match /products/{productId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidProduct(request.resource.data);
+        allow update: if isOwner(uid) && isValidProduct(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+
+      // Sales: strict owner-only read/create/delete; update restricted to voided: false -> true
+      match /sales/{saleId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidSale(request.resource.data);
+        allow update: if isOwner(uid) && isValidSale(request.resource.data) && isValidSaleVoidUpdate();
+        allow delete: if isOwner(uid);
+      }
+
+      // Stock Logs: append-only (update denied) with strict owner-only access
+      match /stockLogs/{logId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidStockLog(request.resource.data);
+        allow update: if false;
+        allow delete: if isOwner(uid);
+      }
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

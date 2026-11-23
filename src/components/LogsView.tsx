@@ -20,6 +20,7 @@ import {
 import { voidSaleTransaction } from '../db';
 
 interface LogsViewProps {
+  uid: string;
   products: Product[];
   sales: Sale[];
   stockLogs: StockLog[];
@@ -44,7 +45,7 @@ function getPeriodStart(period: LogPeriod): number {
 
 const PAGE_SIZE = 30;
 
-export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
+export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
   const [period, setPeriod] = useState<LogPeriod>('today');
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('all');
   const [logKind, setLogKind] = useState<LogKind>('sales');
@@ -69,7 +70,7 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
 
   // Fallback cost lookup for older sales saved before costPrice snapshotting
   const productCostMap = useMemo(() => {
-    const map = new Map<number, number>();
+    const map = new Map<string, number>();
     for (const p of products) {
       if (p.id != null) map.set(p.id, p.costPrice || 0);
     }
@@ -172,7 +173,7 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
   const handleVoid = async (sale: Sale) => {
     if (!sale.id || sale.voided) return;
     if (!window.confirm('Void this sale and return all items back to stock?')) return;
-    await voidSaleTransaction(sale.id);
+    await voidSaleTransaction(uid, sale.id);
   };
 
   return (

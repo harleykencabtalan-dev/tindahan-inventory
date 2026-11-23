@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
   Store,
   ShoppingCart,
@@ -8,38 +8,82 @@ import {
   ClipboardList,
   HardDriveDownload,
 } from 'lucide-react';
-import { db, ensureSeeded } from './db';
+import { auth } from './firebase';
+import {
+  ensureSeeded,
+  subscribeProducts,
+  subscribeSales,
+  subscribeStockLogs,
+} from './db';
+import { type Product, type Sale, type StockLog } from './types';
 import { PosView } from './components/PosView';
 import { StockView } from './components/StockView';
 import { RiceView } from './components/RiceView';
 import { LogsView } from './components/LogsView';
 import { BackupModal } from './components/BackupModal';
+import { AuthScreen } from './components/AuthScreen';
 
 type Tab = 'pos' | 'stock' | 'rice' | 'logs';
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
   const [activeTab, setActiveTab] = useState<Tab>('pos');
   const [backupOpen, setBackupOpen] = useState(false);
 
+  const [products, setProducts] = useState<Product[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [stockLogs, setStockLogs] = useState<StockLog[]>([]);
+
   useEffect(() => {
-    ensureSeeded();
+    return onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      setAuthReady(true);
+    });
   }, []);
 
-  const products = useLiveQuery(() => db.products.orderBy('name').toArray(), []) ?? [];
-  const sales =
-    useLiveQuery(() => db.sales.orderBy('createdAt').reverse().toArray(), []) ?? [];
-  const stockLogs =
-    useLiveQuery(() => db.stockLogs.orderBy('createdAt').reverse().toArray(), []) ?? [];
+  useEffect(() => {
+    if (!user) {
+      setProducts([]);
+      setSales([]);
+      setStockLogs([]);
+      return;
+    }
+
+    ensureSeeded(user.uid).catch(() => {});
+    const unsubProducts = subscribeProducts(user.uid, setProducts);
+    const unsubSales = subscribeSales(user.uid, setSales);
+    const unsubLogs = subscribeStockLogs(user.uid, setStockLogs);
+
+    return () => {
+      unsubProducts();
+      unsubSales();
+      unsubLogs();
+    };
+  }, [user]);
 
   const { sariSariProducts, riceProducts } = useMemo(() => {
-    const sari: typeof products = [];
-    const rice: typeof products = [];
+    const sari: Product[] = [];
+    const rice: Product[] = [];
     for (const p of products) {
       if (p.category === 'Rice' || p.unit === 'kg') rice.push(p);
       else sari.push(p);
     }
     return { sariSariProducts: sari, riceProducts: rice };
   }, [products]);
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center max-w-md mx-auto">
+        <div className="text-sm font-semibold text-slate-500">Loading Tindahan POS...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen />;
+  }
 
   const lowSariSariCount = sariSariProducts.filter(
     (p) => p.stock <= p.lowStockThreshold
@@ -82,21 +126,23 @@ export default function App() {
         <button
           onClick={() => setBackupOpen(true)}
           className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 transition-all flex items-center gap-1.5 text-xs font-semibold"
-          title="Backup & Restore"
-          aria-label="Backup and Restore"
+          title="Sync & Backup"
+          aria-label="Sync and Backup"
         >
           <HardDriveDownload className="w-4 h-4" />
-          <span>Backup</span>
+          <span>Account</span>
         </button>
       </header>
 
       {/* Main Content */}
       <main className="flex-1">
-        {activeTab === 'pos' && <PosView products={sariSariProducts} sales={sales} />}
-        {activeTab === 'stock' && <StockView products={sariSariProducts} />}
-        {activeTab === 'rice' && <RiceView riceProducts={riceProducts} />}
+        {activeTab === 'pos' && (
+          <PosView uid={user.uid} products={sariSariProducts} sales={sales} />
+        )}
+        {activeTab === 'stock' && <StockView uid={user.uid} products={sariSariProducts} />}
+        {activeTab === 'rice' && <RiceView uid={user.uid} riceProducts={riceProducts} />}
         {activeTab === 'logs' && (
-          <LogsView products={products} sales={sales} stockLogs={stockLogs} />
+          <LogsView uid={user.uid} products={products} sales={sales} stockLogs={stockLogs} />
         )}
       </main>
 
@@ -160,7 +206,13 @@ export default function App() {
       </nav>
 
       {/* Modals */}
-      {backupOpen && <BackupModal onClose={() => setBackupOpen(false)} />}
+      {backupOpen && (
+        <BackupModal
+          uid={user.uid}
+          userEmail={user.email}
+          onClose={() => setBackupOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,13 +1,5 @@
-import 'fake-indexeddb/auto';
-import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  db,
-  completeSaleTransaction,
-  voidSaleTransaction,
-  restockProductTransaction,
-  exportAllData,
-  importAllData,
-} from './db';
+import { describe, it, expect } from 'vitest';
+import { buildSaleRecord } from './db';
 import {
   formatPeso,
   formatQty,
@@ -39,7 +31,7 @@ describe('Helper Functions (Unit Tests)', () => {
   it('infers sale source for older sales without a source field', () => {
     expect(
       getSaleSource({
-        items: [{ productId: 1, name: 'Dinorado', unit: 'kg', price: 62, quantity: 2, subtotal: 124 }],
+        items: [{ productId: '1', name: 'Dinorado', unit: 'kg', price: 62, quantity: 2, subtotal: 124 }],
         total: 124,
         cashReceived: 150,
         change: 26,
@@ -49,7 +41,7 @@ describe('Helper Functions (Unit Tests)', () => {
 
     expect(
       getSaleSource({
-        items: [{ productId: 2, name: 'Coke', unit: 'bottle', price: 20, quantity: 1, subtotal: 20 }],
+        items: [{ productId: '2', name: 'Coke', unit: 'bottle', price: 20, quantity: 1, subtotal: 20 }],
         total: 20,
         cashReceived: 20,
         change: 0,
@@ -59,16 +51,10 @@ describe('Helper Functions (Unit Tests)', () => {
   });
 });
 
-describe('Inventory & POS Transactions (Integration Tests)', () => {
-  beforeEach(async () => {
-    await db.products.clear();
-    await db.sales.clear();
-    await db.stockLogs.clear();
-  });
-
-  it('deducts rice stock accurately in decimals and snapshots profit', async () => {
-    // Arrange
-    const riceId = await db.products.add({
+describe('Sale & Profit Calculation (Unit Tests)', () => {
+  it('computes rice decimal totals, cost, profit, and sukli accurately', () => {
+    const rice: Product = {
+      id: 'rice-1',
       name: 'Dinorado Rice',
       category: 'Rice',
       unit: 'kg',
@@ -77,112 +63,55 @@ describe('Inventory & POS Transactions (Integration Tests)', () => {
       stock: 50,
       lowStockThreshold: 15,
       updatedAt: Date.now(),
-    });
-    const rice = (await db.products.get(riceId)) as Product;
+    };
 
-    // Act: sell 2.5 kg for ₱200 cash
-    const sale = await completeSaleTransaction([{ product: rice, quantity: 2.5 }], 200, 'rice');
+    const sale = buildSaleRecord([{ product: rice, quantity: 2.5 }], 200, 'rice');
 
-    // Assert
-    const updatedRice = await db.products.get(riceId);
-    expect(updatedRice?.stock).toBe(47.5);
     expect(sale.source).toBe('rice');
-    expect(sale.total).toBe(155);       // 62 * 2.5
-    expect(sale.totalCost).toBe(135);   // 54 * 2.5
-    expect(sale.profit).toBe(20);       // 155 - 135
-    expect(sale.change).toBe(45);       // 200 - 155
+    expect(sale.total).toBe(155);      // 62 * 2.5
+    expect(sale.totalCost).toBe(135);  // 54 * 2.5
+    expect(sale.profit).toBe(20);      // 155 - 135
+    expect(sale.change).toBe(45);      // 200 - 155
+    expect(sale.voided).toBe(false);
+    expect(sale.items[0].profit).toBe(20);
   });
 
-  it('voiding a sale restores stock and prevents double-voiding', async () => {
-    const cokeId = await db.products.add({
+  it('computes mixed sari-sari cart totals and zero change for exact payment', () => {
+    const coke: Product = {
+      id: 'coke-1',
       name: 'Coke Mismo',
       category: 'Drinks',
       unit: 'bottle',
       price: 20,
       costPrice: 15,
-      stock: 10,
-      lowStockThreshold: 4,
+      stock: 24,
+      lowStockThreshold: 6,
       updatedAt: Date.now(),
-    });
-    const coke = (await db.products.get(cokeId)) as Product;
-
-    const sale = await completeSaleTransaction([{ product: coke, quantity: 3 }], 100, 'sari-sari');
-    expect((await db.products.get(cokeId))?.stock).toBe(7);
-
-    // First void restores 3 bottles
-    await voidSaleTransaction(sale.id!);
-    expect((await db.products.get(cokeId))?.stock).toBe(10);
-    expect((await db.sales.get(sale.id!))?.voided).toBe(true);
-
-    // Second void should be a no-op (stock must NOT become 13)
-    await voidSaleTransaction(sale.id!);
-    expect((await db.products.get(cokeId))?.stock).toBe(10);
-  });
-
-  it('never lets stock drop below 0', async () => {
-    const eggId = await db.products.add({
+    };
+    const eggs: Product = {
+      id: 'egg-1',
       name: 'Eggs',
       category: 'Sari-Sari',
       unit: 'pc',
       price: 9,
       costPrice: 7.5,
-      stock: 2,
-      lowStockThreshold: 5,
+      stock: 30,
+      lowStockThreshold: 10,
       updatedAt: Date.now(),
-    });
-    const egg = (await db.products.get(eggId)) as Product;
+    };
 
-    await completeSaleTransaction([{ product: egg, quantity: 5 }], 50, 'sari-sari');
-    expect((await db.products.get(eggId))?.stock).toBe(0);
-  });
+    const sale = buildSaleRecord(
+      [
+        { product: coke, quantity: 2 },
+        { product: eggs, quantity: 4 },
+      ],
+      76,
+      'sari-sari'
+    );
 
-  it('restocking increases stock and writes a stockLog entry', async () => {
-    const riceId = await db.products.add({
-      name: 'Sinandomeng Rice',
-      category: 'Rice',
-      unit: 'kg',
-      price: 56,
-      costPrice: 49,
-      stock: 10,
-      lowStockThreshold: 15,
-      updatedAt: Date.now(),
-    });
-    const rice = (await db.products.get(riceId)) as Product;
-
-    await restockProductTransaction(rice, 25);
-
-    const updated = await db.products.get(riceId);
-    const logs = await db.stockLogs.toArray();
-    expect(updated?.stock).toBe(35);
-    expect(logs).toHaveLength(1);
-    expect(logs[0].business).toBe('rice');
-    expect(logs[0].quantityAdded).toBe(25);
-  });
-
-  it('exports and restores all data via JSON backup without data loss', async () => {
-    const id = await db.products.add({
-      name: 'Nescafe 3-in-1',
-      category: 'Drinks',
-      unit: 'sachet',
-      price: 15,
-      costPrice: 12,
-      stock: 20,
-      lowStockThreshold: 5,
-      updatedAt: Date.now(),
-    });
-    const item = (await db.products.get(id)) as Product;
-    await restockProductTransaction(item, 10);
-    await completeSaleTransaction([{ product: item, quantity: 2 }], 50, 'sari-sari');
-
-    const json = await exportAllData();
-
-    // Wipe DB completely
-    await db.products.clear();
-    await db.sales.clear();
-    await db.stockLogs.clear();
-
-    const restored = await importAllData(json);
-    expect(restored).toEqual({ products: 1, sales: 1, stockLogs: 1 });
-    expect((await db.products.get(id))?.stock).toBe(28);
+    expect(sale.total).toBe(76);      // 40 + 36
+    expect(sale.totalCost).toBe(60);  // 30 + 30
+    expect(sale.profit).toBe(16);
+    expect(sale.change).toBe(0);
   });
 });

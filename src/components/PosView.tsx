@@ -22,13 +22,14 @@ import {
 import { completeSaleTransaction } from '../db';
 
 interface PosViewProps {
+  uid: string;
   products: Product[];
   sales: Sale[];
 }
 
 const PESO_BILLS = [20, 50, 100, 200, 500, 1000];
 
-export function PosView({ products, sales }: PosViewProps) {
+export function PosView({ uid, products, sales }: PosViewProps) {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<
     'All' | 'Top' | Exclude<StoreCategory, 'Rice'>
@@ -46,7 +47,7 @@ export function PosView({ products, sales }: PosViewProps) {
 
   // Count total units sold per product from non-voided sales
   const soldCountMap = useMemo(() => {
-    const map = new Map<number, number>();
+    const map = new Map<string, number>();
     for (const sale of sales) {
       if (sale.voided) continue;
       for (const item of sale.items) {
@@ -88,7 +89,7 @@ export function PosView({ products, sales }: PosViewProps) {
   }, [products, search, selectedCategory, soldCountMap]);
 
   const cartMap = useMemo(() => {
-    const map = new Map<number, number>();
+    const map = new Map<string, number>();
     for (const item of cart) {
       if (item.product.id != null) map.set(item.product.id, item.quantity);
     }
@@ -127,7 +128,7 @@ export function PosView({ products, sales }: PosViewProps) {
     });
   };
 
-  const updateCartQty = (productId: number, delta: number) => {
+  const updateCartQty = (productId: string, delta: number) => {
     setCart((prev) =>
       prev
         .map((c) => {
@@ -143,7 +144,7 @@ export function PosView({ products, sales }: PosViewProps) {
     );
   };
 
-  const removeFromCart = (productId: number) => {
+  const removeFromCart = (productId: string) => {
     setCart((prev) => prev.filter((c) => c.product.id !== productId));
   };
 
@@ -168,7 +169,7 @@ export function PosView({ products, sales }: PosViewProps) {
     if (!canComplete) return;
     setIsSubmitting(true);
     try {
-      const sale = await completeSaleTransaction(cart, cashNumber, 'sari-sari');
+      const sale = await completeSaleTransaction(uid, cart, cashNumber, 'sari-sari');
       setCart([]);
       setCheckoutOpen(false);
       showToast(

@@ -18,15 +18,16 @@ import {
   formatQty,
   roundNum,
 } from '../types';
-import { db, restockProductTransaction } from '../db';
+import { saveProduct, deleteProduct, restockProductTransaction } from '../db';
 
 interface StockViewProps {
+  uid: string;
   products: Product[];
 }
 
 type StockFilter = 'All' | 'Low' | Exclude<StoreCategory, 'Rice'>;
 
-export function StockView({ products }: StockViewProps) {
+export function StockView({ uid, products }: StockViewProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<StockFilter>('All');
 
@@ -117,19 +118,28 @@ export function StockView({ products }: StockViewProps) {
       updatedAt: Date.now(),
     };
 
-    if (editingProduct?.id != null) {
-      await db.products.update(editingProduct.id, payload);
-    } else {
-      await db.products.add(payload);
+    try {
+      await saveProduct(uid, payload, editingProduct?.id);
+      setFormOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save item.';
+      window.alert(
+        msg.includes('permission') || msg.includes('PERMISSION_DENIED')
+          ? 'Permission denied by Firestore. Make sure you published firestore.rules in Firebase Console!'
+          : `Could not save item: ${msg}`
+      );
     }
-    setFormOpen(false);
   };
 
   const handleDeleteProduct = async () => {
     if (!editingProduct?.id) return;
     if (!window.confirm(`Delete "${editingProduct.name}" from inventory?`)) return;
-    await db.products.delete(editingProduct.id);
-    setFormOpen(false);
+    try {
+      await deleteProduct(uid, editingProduct.id);
+      setFormOpen(false);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to delete item.');
+    }
   };
 
   const openRestock = (p: Product) => {
@@ -139,8 +149,12 @@ export function StockView({ products }: StockViewProps) {
 
   const handleConfirmRestock = async (addQty: number) => {
     if (!restockProduct || isNaN(addQty) || addQty <= 0) return;
-    await restockProductTransaction(restockProduct, addQty);
-    setRestockProduct(null);
+    try {
+      await restockProductTransaction(uid, restockProduct, addQty);
+      setRestockProduct(null);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to restock item.');
+    }
   };
 
   return (

@@ -29,7 +29,7 @@ export const SARI_SARI_UNITS: { id: Exclude<UnitType, 'kg'>; label: string }[] =
 ];
 
 export interface Product {
-  id?: number;
+  id?: string;
   name: string;
   category: StoreCategory;
   unit: UnitType;
@@ -46,7 +46,7 @@ export interface CartItem {
 }
 
 export interface SaleItem {
-  productId: number;
+  productId: string;
   name: string;
   unit: UnitType;
   price: number;
@@ -57,7 +57,7 @@ export interface SaleItem {
 }
 
 export interface Sale {
-  id?: number;
+  id?: string;
   source?: BusinessType;
   items: SaleItem[];
   total: number;
@@ -70,8 +70,8 @@ export interface Sale {
 }
 
 export interface StockLog {
-  id?: number;
-  productId: number;
+  id?: string;
+  productId: string;
   productName: string;
   business: BusinessType;
   unit: UnitType;

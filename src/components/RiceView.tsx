@@ -19,9 +19,15 @@ import {
   formatQty,
   roundNum,
 } from '../types';
-import { db, completeSaleTransaction, restockProductTransaction } from '../db';
+import {
+  saveProduct,
+  deleteProduct,
+  completeSaleTransaction,
+  restockProductTransaction,
+} from '../db';
 
 interface RiceViewProps {
+  uid: string;
   riceProducts: Product[];
 }
 
@@ -40,7 +46,7 @@ const RICE_PRESETS = [
 
 const PESO_BILLS = [20, 50, 100, 200, 500, 1000];
 
-export function RiceView({ riceProducts }: RiceViewProps) {
+export function RiceView({ uid, riceProducts }: RiceViewProps) {
   const [subTab, setSubTab] = useState<RiceSubTab>('sell');
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<string | null>(null);
@@ -94,7 +100,7 @@ export function RiceView({ riceProducts }: RiceViewProps) {
   }, [riceProducts]);
 
   const cartMap = useMemo(() => {
-    const map = new Map<number, number>();
+    const map = new Map<string, number>();
     for (const item of cart) {
       if (item.product.id != null) map.set(item.product.id, item.quantity);
     }
@@ -133,7 +139,7 @@ export function RiceView({ riceProducts }: RiceViewProps) {
     });
   };
 
-  const updateCartQty = (productId: number, delta: number) => {
+  const updateCartQty = (productId: string, delta: number) => {
     setCart((prev) =>
       prev
         .map((c) => {
@@ -149,7 +155,7 @@ export function RiceView({ riceProducts }: RiceViewProps) {
     );
   };
 
-  const removeFromCart = (productId: number) => {
+  const removeFromCart = (productId: string) => {
     setCart((prev) => prev.filter((c) => c.product.id !== productId));
   };
 
@@ -176,7 +182,7 @@ export function RiceView({ riceProducts }: RiceViewProps) {
     if (!canComplete) return;
     setIsSubmitting(true);
     try {
-      const sale = await completeSaleTransaction(cart, cashNumber, 'rice');
+      const sale = await completeSaleTransaction(uid, cart, cashNumber, 'rice');
       setCart([]);
       setCheckoutOpen(false);
       showToast(
@@ -233,27 +239,40 @@ export function RiceView({ riceProducts }: RiceViewProps) {
       updatedAt: Date.now(),
     };
 
-    if (editingRice?.id != null) {
-      await db.products.update(editingRice.id, payload);
-    } else {
-      await db.products.add(payload);
+    try {
+      await saveProduct(uid, payload, editingRice?.id);
+      setFormOpen(false);
+      showToast(editingRice ? 'Rice variety updated!' : 'Rice variety added!');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save rice variety.';
+      window.alert(
+        msg.includes('permission') || msg.includes('PERMISSION_DENIED')
+          ? 'Permission denied by Firestore. Make sure you published firestore.rules in Firebase Console!'
+          : `Could not save rice: ${msg}`
+      );
     }
-    setFormOpen(false);
-    showToast(editingRice ? 'Rice variety updated!' : 'Rice variety added!');
   };
 
   const handleDeleteRice = async () => {
     if (!editingRice?.id) return;
     if (!window.confirm(`Delete "${editingRice.name}" from Rice inventory?`)) return;
-    await db.products.delete(editingRice.id);
-    setFormOpen(false);
+    try {
+      await deleteProduct(uid, editingRice.id);
+      setFormOpen(false);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to delete rice variety.');
+    }
   };
 
   const handleConfirmRestock = async (addKg: number) => {
     if (!restockProduct || isNaN(addKg) || addKg <= 0) return;
-    await restockProductTransaction(restockProduct, addKg);
-    showToast(`Added +${roundNum(addKg, 2)} kg to ${restockProduct.name}`);
-    setRestockProduct(null);
+    try {
+      await restockProductTransaction(uid, restockProduct, addKg);
+      showToast(`Added +${roundNum(addKg, 2)} kg to ${restockProduct.name}`);
+      setRestockProduct(null);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to restock rice.');
+    }
   };
 
   return (
