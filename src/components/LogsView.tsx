@@ -7,6 +7,8 @@ import {
   Store,
   Calendar,
   TrendingUp,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   type Product,
@@ -26,27 +28,75 @@ interface LogsViewProps {
   stockLogs: StockLog[];
 }
 
-type LogPeriod = 'today' | 'weekly' | 'monthly';
+type LogPeriod = 'day' | 'weekly' | 'month' | 'year';
 type BusinessFilter = 'all' | BusinessType;
 type LogKind = 'sales' | 'restocks';
 
-function getPeriodStart(period: LogPeriod): number {
-  const now = new Date();
-  if (period === 'today') {
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  }
-  if (period === 'weekly') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    start.setDate(start.getDate() - 6);
-    return start.getTime();
-  }
-  return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-}
-
 const PAGE_SIZE = 30;
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function toDateInputValue(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function toMonthInputValue(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
+
+function getDateRange(
+  period: LogPeriod,
+  selectedDate: string,
+  selectedMonth: string,
+  selectedYear: number
+): { start: number; end: number; label: string } {
+  const now = new Date();
+
+  if (period === 'day') {
+    const [y, m, day] = selectedDate.split('-').map(Number);
+    const d = y && m && day ? new Date(y, m - 1, day) : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const start = d.getTime();
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const isToday = toDateInputValue(d) === toDateInputValue(now);
+    const label = isToday
+      ? 'Today'
+      : d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+    return { start, end, label };
+  }
+
+  if (period === 'weekly') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    return { start, end, label: 'Last 7 Days' };
+  }
+
+  if (period === 'month') {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const d = y && m ? new Date(y, m - 1, 1) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const start = d.getTime();
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+    const label = d.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+    return { start, end, label };
+  }
+
+  // Year
+  const start = new Date(selectedYear, 0, 1).getTime();
+  const end = new Date(selectedYear + 1, 0, 1).getTime();
+  return { start, end, label: `Year ${selectedYear}` };
+}
+
 export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
-  const [period, setPeriod] = useState<LogPeriod>('today');
+  const todayStr = toDateInputValue(new Date());
+  const thisMonthStr = toMonthInputValue(new Date());
+  const thisYear = new Date().getFullYear();
+
+  const [period, setPeriod] = useState<LogPeriod>('day');
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [selectedMonth, setSelectedMonth] = useState(thisMonthStr);
+  const [selectedYear, setSelectedYear] = useState(thisYear);
+
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('all');
   const [logKind, setLogKind] = useState<LogKind>('sales');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -66,7 +116,31 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
     setVisibleCount(PAGE_SIZE);
   };
 
-  const periodStart = useMemo(() => getPeriodStart(period), [period]);
+  const shiftDate = (deltaDays: number) => {
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const next = new Date(y, m - 1, d + deltaDays);
+    setSelectedDate(toDateInputValue(next));
+    setVisibleCount(PAGE_SIZE);
+  };
+
+  const shiftMonth = (deltaMonths: number) => {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const next = new Date(y, m - 1 + deltaMonths, 1);
+    setSelectedMonth(toMonthInputValue(next));
+    setVisibleCount(PAGE_SIZE);
+  };
+
+  const yearOptions = useMemo(() => {
+    const years = new Set<number>([thisYear, thisYear - 1, thisYear - 2]);
+    for (const s of sales) years.add(new Date(s.createdAt).getFullYear());
+    for (const l of stockLogs) years.add(new Date(l.createdAt).getFullYear());
+    return Array.from(years).sort((a, b) => b - a);
+  }, [sales, stockLogs, thisYear]);
+
+  const range = useMemo(
+    () => getDateRange(period, selectedDate, selectedMonth, selectedYear),
+    [period, selectedDate, selectedMonth, selectedYear]
+  );
 
   // Fallback cost lookup for older sales saved before costPrice snapshotting
   const productCostMap = useMemo(() => {
@@ -91,8 +165,8 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
   };
 
   const periodSales = useMemo(
-    () => sales.filter((s) => s.createdAt >= periodStart),
-    [sales, periodStart]
+    () => sales.filter((s) => s.createdAt >= range.start && s.createdAt < range.end),
+    [sales, range]
   );
 
   const filteredSales = useMemo(
@@ -107,11 +181,11 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
   const filteredStockLogs = useMemo(
     () =>
       stockLogs.filter((l) => {
-        if (l.createdAt < periodStart) return false;
+        if (l.createdAt < range.start || l.createdAt >= range.end) return false;
         if (businessFilter === 'all') return true;
         return l.business === businessFilter;
       }),
-    [stockLogs, periodStart, businessFilter]
+    [stockLogs, range, businessFilter]
   );
 
   const totals = useMemo(() => {
@@ -163,13 +237,6 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
     };
   }, [periodSales, businessFilter, productCostMap]);
 
-  const periodLabel =
-    period === 'today'
-      ? 'Today'
-      : period === 'weekly'
-        ? 'Last 7 Days'
-        : new Date().toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
-
   const handleVoid = async (sale: Sale) => {
     if (!sale.id || sale.voided) return;
     if (!window.confirm('Void this sale and return all items back to stock?')) return;
@@ -178,14 +245,15 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
 
   return (
     <div className="flex flex-col pb-24">
-      {/* Period Selector (Today / Weekly / Monthly) */}
+      {/* Period Selector (Day / Weekly / Month / Year) */}
       <div className="sticky top-14 z-20 bg-slate-50/95 backdrop-blur-sm px-4 pt-3 pb-2.5 border-b border-slate-200/80 space-y-2.5">
-        <div className="grid grid-cols-3 bg-slate-200/70 p-1 rounded-xl">
+        <div className="grid grid-cols-4 bg-slate-200/70 p-1 rounded-xl">
           {(
             [
-              { id: 'today', label: 'Today' },
-              { id: 'weekly', label: 'Weekly' },
-              { id: 'monthly', label: 'Monthly' },
+              { id: 'day', label: 'Day' },
+              { id: 'weekly', label: '7 Days' },
+              { id: 'month', label: 'Month' },
+              { id: 'year', label: 'Year' },
             ] as const
           ).map((p) => (
             <button
@@ -201,6 +269,128 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
             </button>
           ))}
         </div>
+
+        {/* Specific Date / Month / Year Picker */}
+        {period === 'day' && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => shiftDate(-1)}
+              aria-label="Previous day"
+              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 active:bg-slate-100"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setSelectedDate(e.target.value);
+                  setVisibleCount(PAGE_SIZE);
+                }
+              }}
+              className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 text-center focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            />
+            <button
+              onClick={() => shiftDate(1)}
+              aria-label="Next day"
+              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 active:bg-slate-100"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            {selectedDate !== todayStr && (
+              <button
+                onClick={() => {
+                  setSelectedDate(todayStr);
+                  setVisibleCount(PAGE_SIZE);
+                }}
+                className="px-2.5 py-2 rounded-xl bg-teal-50 text-teal-800 text-xs font-bold"
+              >
+                Today
+              </button>
+            )}
+          </div>
+        )}
+
+        {period === 'month' && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => shiftMonth(-1)}
+              aria-label="Previous month"
+              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 active:bg-slate-100"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setSelectedMonth(e.target.value);
+                  setVisibleCount(PAGE_SIZE);
+                }
+              }}
+              className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 text-center focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            />
+            <button
+              onClick={() => shiftMonth(1)}
+              aria-label="Next month"
+              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 active:bg-slate-100"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            {selectedMonth !== thisMonthStr && (
+              <button
+                onClick={() => {
+                  setSelectedMonth(thisMonthStr);
+                  setVisibleCount(PAGE_SIZE);
+                }}
+                className="px-2.5 py-2 rounded-xl bg-teal-50 text-teal-800 text-xs font-bold"
+              >
+                This Mo
+              </button>
+            )}
+          </div>
+        )}
+
+        {period === 'year' && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => {
+                setSelectedYear((y) => y - 1);
+                setVisibleCount(PAGE_SIZE);
+              }}
+              aria-label="Previous year"
+              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 active:bg-slate-100"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <select
+              value={selectedYear}
+              onChange={(e) => {
+                setSelectedYear(Number(e.target.value));
+                setVisibleCount(PAGE_SIZE);
+              }}
+              className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 text-center focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            >
+              {yearOptions.map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => {
+                setSelectedYear((y) => y + 1);
+                setVisibleCount(PAGE_SIZE);
+              }}
+              aria-label="Next year"
+              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 active:bg-slate-100"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Business Filter Pills */}
         <div className="flex gap-2">
@@ -234,7 +424,7 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
           <div className="flex items-center justify-between text-teal-100 text-xs font-semibold">
             <span className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5" />
-              {periodLabel} Summary
+              {range.label} Summary
             </span>
             <span className="bg-white/15 px-2.5 py-0.5 rounded-full">
               {totals.txCount} {totals.txCount === 1 ? 'sale' : 'sales'}
@@ -329,102 +519,102 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
           <div className="space-y-2.5">
             {filteredSales.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-sm">
-                No sales recorded for {periodLabel.toLowerCase()}.
+                No sales recorded for {range.label.toLowerCase()}.
               </div>
             ) : (
               <>
                 {filteredSales.slice(0, visibleCount).map((sale) => {
-                const src = getSaleSource(sale);
-                const saleProfit = computeSaleProfit(sale);
-                const dt = new Date(sale.createdAt);
-                const timeStr = dt.toLocaleTimeString('en-PH', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                });
-                const dateStr = dt.toLocaleDateString('en-PH', {
-                  month: 'short',
-                  day: 'numeric',
-                });
+                  const src = getSaleSource(sale);
+                  const saleProfit = computeSaleProfit(sale);
+                  const dt = new Date(sale.createdAt);
+                  const timeStr = dt.toLocaleTimeString('en-PH', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  });
+                  const dateStr = dt.toLocaleDateString('en-PH', {
+                    month: 'short',
+                    day: 'numeric',
+                  });
 
-                return (
-                  <div
-                    key={sale.id}
-                    className={`p-3.5 rounded-2xl border ${
-                      sale.voided
-                        ? 'bg-slate-50 border-slate-200 opacity-60'
-                        : 'bg-white border-slate-200 shadow-2xs'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2 gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md shrink-0 ${
-                            src === 'rice'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-teal-100 text-teal-800'
-                          }`}
-                        >
-                          {src === 'rice' ? 'Rice' : 'Sari-Sari'}
-                        </span>
-                        <span className="text-xs font-medium text-slate-500 truncate">
-                          {dateStr} • {timeStr}
-                        </span>
+                  return (
+                    <div
+                      key={sale.id}
+                      className={`p-3.5 rounded-2xl border ${
+                        sale.voided
+                          ? 'bg-slate-50 border-slate-200 opacity-60'
+                          : 'bg-white border-slate-200 shadow-2xs'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                              src === 'rice'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-teal-100 text-teal-800'
+                            }`}
+                          >
+                            {src === 'rice' ? 'Rice' : 'Sari-Sari'}
+                          </span>
+                          <span className="text-xs font-medium text-slate-500 truncate">
+                            {dateStr} • {timeStr}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {sale.voided ? (
+                            <span className="text-[10px] font-bold uppercase bg-red-100 text-red-700 px-2 py-0.5 rounded-md">
+                              Voided
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleVoid(sale)}
+                              className="text-[11px] font-semibold text-red-600 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-50 active:bg-red-100"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              Undo
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {sale.voided ? (
-                          <span className="text-[10px] font-bold uppercase bg-red-100 text-red-700 px-2 py-0.5 rounded-md">
-                            Voided
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => handleVoid(sale)}
-                            className="text-[11px] font-semibold text-red-600 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-50 active:bg-red-100"
+                      <ul className="space-y-0.5 text-xs text-slate-700">
+                        {sale.items.map((item, idx) => (
+                          <li key={idx} className="flex justify-between gap-2">
+                            <span className="truncate">
+                              {item.quantity} {item.unit} × {item.name}
+                            </span>
+                            <span className="text-slate-500 shrink-0">
+                              {formatPeso(item.subtotal)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <span className="text-slate-500 font-medium">
+                          Rev:{' '}
+                          <strong
+                            className={
+                              sale.voided
+                                ? 'line-through text-slate-400'
+                                : src === 'rice'
+                                  ? 'text-amber-800'
+                                  : 'text-teal-800'
+                            }
                           >
-                            <RotateCcw className="w-3 h-3" />
-                            Undo
-                          </button>
+                            {formatPeso(sale.total)}
+                          </strong>
+                        </span>
+
+                        {!sale.voided && (
+                          <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold">
+                            +{formatPeso(saleProfit)} profit
+                          </span>
                         )}
                       </div>
                     </div>
-
-                    <ul className="space-y-0.5 text-xs text-slate-700">
-                      {sale.items.map((item, idx) => (
-                        <li key={idx} className="flex justify-between gap-2">
-                          <span className="truncate">
-                            {item.quantity} {item.unit} × {item.name}
-                          </span>
-                          <span className="text-slate-500 shrink-0">
-                            {formatPeso(item.subtotal)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                      <span className="text-slate-500 font-medium">
-                        Rev:{' '}
-                        <strong
-                          className={
-                            sale.voided
-                              ? 'line-through text-slate-400'
-                              : src === 'rice'
-                                ? 'text-amber-800'
-                                : 'text-teal-800'
-                          }
-                        >
-                          {formatPeso(sale.total)}
-                        </strong>
-                      </span>
-
-                      {!sale.voided && (
-                        <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold">
-                          +{formatPeso(saleProfit)} profit
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
+                  );
                 })}
                 {filteredSales.length > visibleCount && (
                   <button
@@ -444,51 +634,51 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
           <div className="space-y-2.5">
             {filteredStockLogs.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-sm">
-                No restocks recorded for {periodLabel.toLowerCase()}.
+                No restocks recorded for {range.label.toLowerCase()}.
               </div>
             ) : (
               <>
                 {filteredStockLogs.slice(0, visibleCount).map((log) => {
-                const dt = new Date(log.createdAt);
-                const timeStr = dt.toLocaleTimeString('en-PH', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                });
-                const dateStr = dt.toLocaleDateString('en-PH', {
-                  month: 'short',
-                  day: 'numeric',
-                });
+                  const dt = new Date(log.createdAt);
+                  const timeStr = dt.toLocaleTimeString('en-PH', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  });
+                  const dateStr = dt.toLocaleDateString('en-PH', {
+                    month: 'short',
+                    day: 'numeric',
+                  });
 
-                return (
-                  <div
-                    key={log.id}
-                    className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <span
-                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
-                            log.business === 'rice'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-teal-100 text-teal-800'
-                          }`}
-                        >
-                          {log.business === 'rice' ? 'Rice' : 'Sari-Sari'}
-                        </span>
-                        <span className="text-[11px] text-slate-400">
-                          {dateStr} • {timeStr}
-                        </span>
+                  return (
+                    <div
+                      key={log.id}
+                      className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span
+                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                              log.business === 'rice'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-teal-100 text-teal-800'
+                            }`}
+                          >
+                            {log.business === 'rice' ? 'Rice' : 'Sari-Sari'}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            {dateStr} • {timeStr}
+                          </span>
+                        </div>
+                        <div className="font-bold text-sm text-slate-900 truncate">
+                          {log.productName}
+                        </div>
                       </div>
-                      <div className="font-bold text-sm text-slate-900 truncate">
-                        {log.productName}
-                      </div>
+
+                      <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs shrink-0">
+                        +{log.quantityAdded} {log.unit}
+                      </span>
                     </div>
-
-                    <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs shrink-0">
-                      +{log.quantityAdded} {log.unit}
-                    </span>
-                  </div>
-                );
+                  );
                 })}
                 {filteredStockLogs.length > visibleCount && (
                   <button
