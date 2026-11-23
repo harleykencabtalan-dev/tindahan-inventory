@@ -8,9 +8,11 @@ import {
   X,
   CheckCircle2,
   Package,
+  Flame,
 } from 'lucide-react';
 import {
   type Product,
+  type Sale,
   type CartItem,
   type StoreCategory,
   SARI_SARI_CATEGORIES,
@@ -21,13 +23,16 @@ import { completeSaleTransaction } from '../db';
 
 interface PosViewProps {
   products: Product[];
+  sales: Sale[];
 }
 
 const PESO_BILLS = [20, 50, 100, 200, 500, 1000];
 
-export function PosView({ products }: PosViewProps) {
+export function PosView({ products, sales }: PosViewProps) {
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<'All' | Exclude<StoreCategory, 'Rice'>>('All');
+  const [selectedCategory, setSelectedCategory] = useState<
+    'All' | 'Top' | Exclude<StoreCategory, 'Rice'>
+  >('All');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [cashInput, setCashInput] = useState('');
@@ -39,14 +44,48 @@ export function PosView({ products }: PosViewProps) {
     setTimeout(() => setToast(null), 3000);
   };
 
+  // Count total units sold per product from non-voided sales
+  const soldCountMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const sale of sales) {
+      if (sale.voided) continue;
+      for (const item of sale.items) {
+        map.set(item.productId, (map.get(item.productId) ?? 0) + item.quantity);
+      }
+    }
+    return map;
+  }, [sales]);
+
+  const topSoldCount = useMemo(() => {
+    let count = 0;
+    for (const p of products) {
+      if (p.id != null && (soldCountMap.get(p.id) ?? 0) > 0) count++;
+    }
+    return Math.min(count, 12);
+  }, [products, soldCountMap]);
+
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return products.filter((p) => {
-      const matchCat = selectedCategory === 'All' || p.category === selectedCategory;
-      const matchSearch = !q || p.name.toLowerCase().includes(q);
-      return matchCat && matchSearch;
+    const list = products.filter((p) => {
+      if (selectedCategory === 'Top') {
+        const sold = p.id != null ? soldCountMap.get(p.id) ?? 0 : 0;
+        if (sold <= 0) return false;
+      } else if (selectedCategory !== 'All' && p.category !== selectedCategory) {
+        return false;
+      }
+      return !q || p.name.toLowerCase().includes(q);
     });
-  }, [products, search, selectedCategory]);
+
+    // Sort by Most Sold first, then alphabetically
+    list.sort((a, b) => {
+      const soldA = a.id != null ? soldCountMap.get(a.id) ?? 0 : 0;
+      const soldB = b.id != null ? soldCountMap.get(b.id) ?? 0 : 0;
+      if (soldB !== soldA) return soldB - soldA;
+      return a.name.localeCompare(b.name);
+    });
+
+    return selectedCategory === 'Top' ? list.slice(0, 12) : list;
+  }, [products, search, selectedCategory, soldCountMap]);
 
   const cartMap = useMemo(() => {
     const map = new Map<number, number>();
@@ -186,6 +225,19 @@ export function PosView({ products }: PosViewProps) {
           >
             All ({products.length})
           </button>
+          {topSoldCount > 0 && (
+            <button
+              onClick={() => setSelectedCategory('Top')}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1 ${
+                selectedCategory === 'Top'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-50 text-amber-800 border border-amber-200'
+              }`}
+            >
+              <Flame className="w-3 h-3" />
+              Top Sold ({topSoldCount})
+            </button>
+          )}
           {SARI_SARI_CATEGORIES.map((cat) => (
             <button
               key={cat.id}
@@ -216,30 +268,53 @@ export function PosView({ products }: PosViewProps) {
           <div className="grid grid-cols-2 gap-2.5">
             {filteredProducts.map((product) => {
               const inCartQty = product.id != null ? cartMap.get(product.id) ?? 0 : 0;
+              const soldCount = product.id != null ? soldCountMap.get(product.id) ?? 0 : 0;
               const isOut = product.stock <= 0;
               const isLow = !isOut && product.stock <= product.lowStockThreshold;
 
               return (
-                <button
+                <div
                   key={product.id}
+                  role="button"
+                  tabIndex={isOut ? -1 : 0}
+                  aria-disabled={isOut}
                   onClick={() => handleProductTap(product)}
-                  disabled={isOut}
-                  className={`relative text-left p-3.5 rounded-2xl border transition-all active:scale-[0.98] flex flex-col justify-between min-h-[108px] ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleProductTap(product);
+                    }
+                  }}
+                  className={`relative text-left p-3.5 rounded-2xl border transition-all select-none flex flex-col justify-between min-h-[112px] ${
                     isOut
                       ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
                       : inCartQty > 0
-                        ? 'bg-teal-50/70 border-teal-500 ring-1 ring-teal-500/30 shadow-xs'
-                        : 'bg-white border-slate-200/90 shadow-2xs hover:border-teal-300'
+                        ? 'bg-teal-50/70 border-teal-500 ring-1 ring-teal-500/30 shadow-xs cursor-pointer active:scale-[0.98]'
+                        : 'bg-white border-slate-200/90 shadow-2xs hover:border-teal-300 cursor-pointer active:scale-[0.98]'
                   }`}
                 >
-                  {inCartQty > 0 && (
-                    <span className="absolute -top-2 -right-1.5 bg-teal-700 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-                      {inCartQty}×
-                    </span>
+                  {/* In-cart quick -/+ control */}
+                  {inCartQty > 0 && product.id != null && (
+                    <div className="absolute -top-2.5 -right-1.5 flex items-center bg-teal-700 text-white rounded-full shadow-md overflow-hidden border border-white">
+                      <button
+                        type="button"
+                        aria-label={`Remove one ${product.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateCartQty(product.id!, -1);
+                        }}
+                        className="w-7 h-6 flex items-center justify-center bg-teal-800 hover:bg-teal-900 active:bg-teal-950"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="px-2 text-[11px] font-extrabold">
+                        {inCartQty}×
+                      </span>
+                    </div>
                   )}
 
                   <div>
-                    <div className="flex items-center gap-1 mb-1">
+                    <div className="flex items-center gap-1 mb-1 flex-wrap">
                       {isOut && (
                         <span className="text-[10px] font-bold uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md">
                           Out
@@ -248,6 +323,11 @@ export function PosView({ products }: PosViewProps) {
                       {isLow && (
                         <span className="text-[10px] font-bold uppercase bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-md">
                           Low
+                        </span>
+                      )}
+                      {soldCount > 0 && !isOut && (
+                        <span className="text-[10px] font-semibold text-slate-400">
+                          {soldCount} sold
                         </span>
                       )}
                     </div>
@@ -275,7 +355,7 @@ export function PosView({ products }: PosViewProps) {
                       {roundNum(product.stock, 2)} {product.unit}
                     </span>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

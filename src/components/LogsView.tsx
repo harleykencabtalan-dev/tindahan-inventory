@@ -42,10 +42,28 @@ function getPeriodStart(period: LogPeriod): number {
   return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 }
 
+const PAGE_SIZE = 30;
+
 export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
   const [period, setPeriod] = useState<LogPeriod>('today');
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('all');
   const [logKind, setLogKind] = useState<LogKind>('sales');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const handlePeriodChange = (next: LogPeriod) => {
+    setPeriod(next);
+    setVisibleCount(PAGE_SIZE);
+  };
+
+  const handleBusinessChange = (next: BusinessFilter) => {
+    setBusinessFilter(next);
+    setVisibleCount(PAGE_SIZE);
+  };
+
+  const handleLogKindChange = (next: LogKind) => {
+    setLogKind(next);
+    setVisibleCount(PAGE_SIZE);
+  };
 
   const periodStart = useMemo(() => getPeriodStart(period), [period]);
 
@@ -171,7 +189,7 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
           ).map((p) => (
             <button
               key={p.id}
-              onClick={() => setPeriod(p.id)}
+              onClick={() => handlePeriodChange(p.id)}
               className={`py-2 rounded-lg text-xs font-bold transition-all ${
                 period === p.id
                   ? 'bg-teal-700 text-white shadow-xs'
@@ -194,7 +212,7 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
           ).map((b) => (
             <button
               key={b.id}
-              onClick={() => setBusinessFilter(b.id)}
+              onClick={() => handleBusinessChange(b.id)}
               className={`flex-1 py-1.5 px-2 rounded-full text-xs font-semibold border transition-colors ${
                 businessFilter === b.id
                   ? b.id === 'rice'
@@ -281,7 +299,7 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
         <div className="flex items-center justify-between border-b border-slate-200 pb-2">
           <div className="flex gap-2">
             <button
-              onClick={() => setLogKind('sales')}
+              onClick={() => handleLogKindChange('sales')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
                 logKind === 'sales'
                   ? 'bg-slate-900 text-white'
@@ -292,7 +310,7 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
               Sales Logs ({filteredSales.length})
             </button>
             <button
-              onClick={() => setLogKind('restocks')}
+              onClick={() => handleLogKindChange('restocks')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
                 logKind === 'restocks'
                   ? 'bg-slate-900 text-white'
@@ -313,7 +331,8 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
                 No sales recorded for {periodLabel.toLowerCase()}.
               </div>
             ) : (
-              filteredSales.map((sale) => {
+              <>
+                {filteredSales.slice(0, visibleCount).map((sale) => {
                 const src = getSaleSource(sale);
                 const saleProfit = computeSaleProfit(sale);
                 const dt = new Date(sale.createdAt);
@@ -405,7 +424,16 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
                     </div>
                   </div>
                 );
-              })
+                })}
+                {filteredSales.length > visibleCount && (
+                  <button
+                    onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                    className="w-full py-3 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 active:scale-[0.99]"
+                  >
+                    Load More ({filteredSales.length - visibleCount} remaining)
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}
@@ -418,7 +446,8 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
                 No restocks recorded for {periodLabel.toLowerCase()}.
               </div>
             ) : (
-              filteredStockLogs.map((log) => {
+              <>
+                {filteredStockLogs.slice(0, visibleCount).map((log) => {
                 const dt = new Date(log.createdAt);
                 const timeStr = dt.toLocaleTimeString('en-PH', {
                   hour: 'numeric',
@@ -459,7 +488,16 @@ export function LogsView({ products, sales, stockLogs }: LogsViewProps) {
                     </span>
                   </div>
                 );
-              })
+                })}
+                {filteredStockLogs.length > visibleCount && (
+                  <button
+                    onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                    className="w-full py-3 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 active:scale-[0.99]"
+                  >
+                    Load More ({filteredStockLogs.length - visibleCount} remaining)
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}

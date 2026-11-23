@@ -92,7 +92,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1">
-        {activeTab === 'pos' && <PosView products={sariSariProducts} />}
+        {activeTab === 'pos' && <PosView products={sariSariProducts} sales={sales} />}
         {activeTab === 'stock' && <StockView products={sariSariProducts} />}
         {activeTab === 'rice' && <RiceView riceProducts={riceProducts} />}
         {activeTab === 'logs' && (
