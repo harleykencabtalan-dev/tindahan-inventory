@@ -175,7 +175,10 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
   };
 
   const periodSales = useMemo(
-    () => sales.filter((s) => s.createdAt >= range.start && s.createdAt < range.end),
+    () =>
+      sales.filter(
+        (s) => !s.voided && s.createdAt >= range.start && s.createdAt < range.end
+      ),
     [sales, range]
   );
 
@@ -270,8 +273,8 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
         : 'Sari-Sari';
 
   const handleVoid = async (sale: Sale) => {
-    if (!sale.id || sale.voided) return;
-    if (!window.confirm('Void this sale and return all items back to stock?')) return;
+    if (!sale.id) return;
+    if (!window.confirm('Delete this sale and return all items back to stock?')) return;
     await voidSaleTransaction(uid, sale.id);
   };
 
@@ -674,7 +677,7 @@ export function LogsView({ uid, products, sales, stockLogs }: LogsViewProps) {
                                       className="font-bold text-red-600 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 active:bg-red-100 shrink-0"
                                     >
                                       <RotateCcw className="w-3 h-3" />
-                                      Undo Sale
+                                      Delete &amp; Return Stock
                                     </button>
                                   )}
                                 </div>

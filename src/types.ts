@@ -97,11 +97,33 @@ export function formatPeso(amount: number): string {
   })}`;
 }
 
+export const KG_PER_SACK = 25;
+
+export function splitRiceKg(
+  totalKg: number,
+  kgPerSack = KG_PER_SACK
+): { sacks: number; extraKg: number } {
+  const clean = Math.max(0, roundNum(totalKg, 2));
+  const sacks = Math.floor(clean / kgPerSack);
+  const extraKg = roundNum(clean - sacks * kgPerSack, 2);
+  return { sacks, extraKg };
+}
+
+export function formatRiceStock(totalKg: number, kgPerSack = KG_PER_SACK): string {
+  const { sacks, extraKg } = splitRiceKg(totalKg, kgPerSack);
+  if (sacks > 0 && extraKg > 0) {
+    return `${sacks} sack${sacks === 1 ? '' : 's'} + ${extraKg} kg`;
+  }
+  if (sacks > 0) {
+    return `${sacks} sack${sacks === 1 ? '' : 's'} (${roundNum(totalKg, 2)} kg)`;
+  }
+  return `${roundNum(totalKg, 2)} kg`;
+}
+
 export function formatQty(qty: number, unit: UnitType): string {
   const clean = roundNum(qty, 2);
   if (unit === 'kg') {
-    const sacks = clean >= 25 ? ` (${roundNum(clean / 25, 1)} sack${clean >= 50 ? 's' : ''})` : '';
-    return `${clean} kg${sacks}`;
+    return formatRiceStock(clean, KG_PER_SACK);
   }
   return `${clean} ${unit}${clean !== 1 && unit === 'pc' ? 's' : ''}`;
 }

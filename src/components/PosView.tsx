@@ -8,6 +8,7 @@ import {
   BookOpen,
   X,
   Wheat,
+  ChevronDown,
 } from 'lucide-react';
 import {
   type Product,
@@ -33,7 +34,7 @@ const RICE_QUICK_KGS = [
   { label: '1 kg', value: 1 },
   { label: '2 kg', value: 2 },
   { label: '5 kg', value: 5 },
-  { label: '25 kg', value: 25 },
+  { label: '25 kg (1 Sack)', value: 25 },
 ];
 
 export function PosView({ uid, products, sales }: PosViewProps) {
@@ -48,6 +49,7 @@ export function PosView({ uid, products, sales }: PosViewProps) {
 
   // Always-visible optional Sukli calculator
   const [cashInput, setCashInput] = useState('');
+  const [showNotebook, setShowNotebook] = useState(true);
 
   const [toast, setToast] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -580,51 +582,66 @@ export function PosView({ uid, products, sales }: PosViewProps) {
 
       {/* TODAY'S NOTEBOOK (Simple Qty | Product Name | Price) */}
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xs">
-        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setShowNotebook((v) => !v)}
+          aria-expanded={showNotebook}
+          className={`w-full px-4 py-3 bg-slate-50 flex items-center justify-between active:bg-slate-100 transition-colors ${
+            showNotebook ? 'border-b border-slate-200' : ''
+          }`}
+        >
           <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
             Today&apos;s Notebook
           </h3>
-          <span className="text-sm font-extrabold text-teal-800">
-            {formatPeso(todayNotebook.todayTotal)}
-          </span>
-        </div>
-
-        {todayNotebook.rows.length === 0 ? (
-          <div className="text-center py-8 text-xs text-slate-400">
-            Nothing logged yet today.
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-extrabold text-teal-800">
+              {formatPeso(todayNotebook.todayTotal)}
+            </span>
+            <ChevronDown
+              className={`w-4 h-4 text-slate-400 transition-transform ${
+                showNotebook ? 'rotate-180' : ''
+              }`}
+            />
           </div>
-        ) : (
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="border-b border-slate-100 text-[11px] uppercase text-slate-400 text-left">
-                <th className="py-2 pl-4 pr-2 font-bold w-16">Qty</th>
-                <th className="py-2 px-2 font-bold">Product Name</th>
-                <th className="py-2 pl-2 pr-4 font-bold text-right w-24">Price</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {todayNotebook.rows.slice(0, 15).map((row) => (
-                <tr key={row.key}>
-                  <td
-                    className={`py-2.5 pl-4 pr-2 font-bold whitespace-nowrap ${
-                      row.isRice ? 'text-amber-700' : 'text-teal-800'
-                    }`}
-                  >
-                    {row.qty}
-                    {row.unit === 'kg' ? ' kg' : '×'}
-                  </td>
-                  <td className="py-2.5 px-2 text-slate-900 font-medium">
-                    <div className="leading-snug">{row.name}</div>
-                    <div className="text-[10px] text-slate-400">{row.time}</div>
-                  </td>
-                  <td className="py-2.5 pl-2 pr-4 text-right font-extrabold text-slate-900 whitespace-nowrap">
-                    {formatPeso(row.subtotal)}
-                  </td>
+        </button>
+
+        {showNotebook &&
+          (todayNotebook.rows.length === 0 ? (
+            <div className="text-center py-8 text-xs text-slate-400">
+              Nothing logged yet today.
+            </div>
+          ) : (
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 text-[11px] uppercase text-slate-400 text-left">
+                  <th className="py-2 pl-4 pr-2 font-bold w-16">Qty</th>
+                  <th className="py-2 px-2 font-bold">Product Name</th>
+                  <th className="py-2 pl-2 pr-4 font-bold text-right w-24">Price</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {todayNotebook.rows.slice(0, 15).map((row) => (
+                  <tr key={row.key}>
+                    <td
+                      className={`py-2.5 pl-4 pr-2 font-bold whitespace-nowrap ${
+                        row.isRice ? 'text-amber-700' : 'text-teal-800'
+                      }`}
+                    >
+                      {row.qty}
+                      {row.unit === 'kg' ? ' kg' : '×'}
+                    </td>
+                    <td className="py-2.5 px-2 text-slate-900 font-medium">
+                      <div className="leading-snug">{row.name}</div>
+                      <div className="text-[10px] text-slate-400">{row.time}</div>
+                    </td>
+                    <td className="py-2.5 pl-2 pr-4 text-right font-extrabold text-slate-900 whitespace-nowrap">
+                      {formatPeso(row.subtotal)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ))}
       </div>
     </div>
   );

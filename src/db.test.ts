@@ -10,6 +10,7 @@ import {
   formatQty,
   getSaleSource,
   roundNum,
+  splitRiceKg,
   type Product,
   type Sale,
 } from './types';
@@ -21,10 +22,12 @@ describe('Helper Functions (Unit Tests)', () => {
     expect(formatPeso(1250.5)).toBe('₱1,250.50');
   });
 
-  it('formats rice kilos with sack equivalents at 25 kg per sack', () => {
+  it('formats rice kilos with sack equivalents at 25 kg per sack and splits sacks + extra kg', () => {
+    expect(splitRiceKg(71)).toEqual({ sacks: 2, extraKg: 21 });
     expect(formatQty(10, 'kg')).toBe('10 kg');
-    expect(formatQty(25, 'kg')).toBe('25 kg (1 sack)');
-    expect(formatQty(75, 'kg')).toBe('75 kg (3 sacks)');
+    expect(formatQty(25, 'kg')).toBe('1 sack (25 kg)');
+    expect(formatQty(50, 'kg')).toBe('2 sacks (50 kg)');
+    expect(formatQty(71, 'kg')).toBe('2 sacks + 21 kg');
     expect(formatQty(1, 'pc')).toBe('1 pc');
     expect(formatQty(5, 'pc')).toBe('5 pcs');
   });

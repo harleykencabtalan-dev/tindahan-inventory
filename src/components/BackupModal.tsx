@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { X, Download, Upload, Trash2, ShieldCheck, LogOut } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
-import { clearAllData, exportAllData, importAllData } from '../db';
+import { clearAllData, clearSalesOnly, exportAllData, importAllData } from '../db';
 
 interface BackupModalProps {
   uid: string;
@@ -49,6 +49,23 @@ export function BackupModal({ uid, userEmail, onClose }: BackupModalProps) {
       setBusy(false);
     }
     e.target.value = '';
+  };
+
+  const handleClearSalesOnly = async () => {
+    if (
+      !window.confirm(
+        'Delete all recorded sales & revenue history? Your Sari-Sari & Rice stock/products will NOT be touched.'
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const count = await clearSalesOnly(uid);
+      setStatus(`Cleared ${count} sale record(s). Your inventory stock is untouched!`);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleClearAll = async () => {
@@ -129,6 +146,15 @@ export function BackupModal({ uid, userEmail, onClose }: BackupModalProps) {
           >
             <Upload className="w-4 h-4" />
             Restore from Backup
+          </button>
+
+          <button
+            disabled={busy}
+            onClick={handleClearSalesOnly}
+            className="w-full py-3 px-4 rounded-xl bg-amber-50 hover:bg-amber-100 disabled:opacity-60 text-amber-800 border border-amber-200 font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.99]"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear Sales / Revenue Only (Keep Stock)
           </button>
 
           <button

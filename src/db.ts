@@ -324,27 +324,28 @@ export async function voidSaleTransaction(uid: string, saleId: string): Promise<
     const saleSnap = await tx.get(saleRef);
     if (!saleSnap.exists()) return;
     const sale = saleSnap.data() as Omit<Sale, 'id'>;
-    if (sale.voided) return;
 
-    const prodSnapshots = await Promise.all(
-      sale.items.map(async (item) => {
-        const ref = doc(firestore, 'stores', uid, 'products', String(item.productId));
-        const snap = await tx.get(ref);
-        return { ref, snap, qty: item.quantity };
-      })
-    );
+    if (!sale.voided) {
+      const prodSnapshots = await Promise.all(
+        sale.items.map(async (item) => {
+          const ref = doc(firestore, 'stores', uid, 'products', String(item.productId));
+          const snap = await tx.get(ref);
+          return { ref, snap, qty: item.quantity };
+        })
+      );
 
-    for (const { ref, snap, qty } of prodSnapshots) {
-      if (snap.exists()) {
-        const currentStock = Number(snap.data().stock ?? 0);
-        tx.update(ref, {
-          stock: roundNum(currentStock + qty, 2),
-          updatedAt: Date.now(),
-        });
+      for (const { ref, snap, qty } of prodSnapshots) {
+        if (snap.exists()) {
+          const currentStock = Number(snap.data().stock ?? 0);
+          tx.update(ref, {
+            stock: roundNum(currentStock + qty, 2),
+            updatedAt: Date.now(),
+          });
+        }
       }
     }
 
-    tx.update(saleRef, { voided: true });
+    tx.delete(saleRef);
   });
 }
 
@@ -371,6 +372,19 @@ export async function exportAllData(uid: string): Promise<string> {
     null,
     2
   );
+}
+
+export async function clearSalesOnly(uid: string): Promise<number> {
+  const salesSnap = await getDocs(salesCol(uid));
+  const refs = salesSnap.docs.map((d) => d.ref);
+  for (let i = 0; i < refs.length; i += 450) {
+    const batch = writeBatch(firestore);
+    for (const ref of refs.slice(i, i + 450)) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+  }
+  return refs.length;
 }
 
 export async function clearAllData(uid: string): Promise<void> {
